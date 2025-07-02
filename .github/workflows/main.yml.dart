@@ -1,49 +1,60 @@
-on:
-pull_request:
-branches:
-- main
-- master
-push:
-branches:
-- main
-- master
-- develop
-name: "Build & Release"
-jobs:
 build:
-name: Build & Release
-runs-on: macos-latest
+name: Create Android Build
+# 1
+needs: version
+runs-on: ubuntu-latest
 steps:
 - uses: actions/checkout@v3
+# 2
+- name: Get version.txt
+uses: actions/download-artifact@v2
+with:
+name: gitversion
+# 3
+- name: Create new file without newline char from version.txt
+run: tr -d '\n' < version.txt > version1.txt
+# 4
+- name: Read version
+id: version
+uses: juliangruber/read-file-action@v1
+with:
+path: version1.txt
+# 5
+- name: Update version in YAML
+run: sed -i 's/99.99.99+99/${{ steps.version.outputs.content }}+${{ github.run_number }}/g' pubspec.yaml
+# 6
+- name: Download Android keystore
+id: android_keystore
+uses: timheuer/base64-to-file@v1.0.3
+with:
+fileName: upload-keystore.jks
+encodedString: ${{ secrets.KEYSTORE_BASE64 }}
+# 7
+- name: Create key.properties
+run: |
+echo "storeFile=${{ steps.android_keystore.outputs.filePath }}" > android/key.properties
+echo "storePassword=${{ secrets.STORE_PASSWORD }}" >> android/key.properties
+echo "keyPassword=${{ secrets.KEY_PASSWORD }}" >> android/key.properties
+echo "keyAlias=${{ secrets.KEY_ALIAS }}" >> android/key.properties
 - uses: actions/setup-java@v3
 with:
 distribution: 'zulu'
-java-version: '12'
+java-version: "12.x"
+cache: gradle
 - uses: subosito/flutter-action@v2
 with:
+flutter-version: "3.0.0"
 channel: 'stable'
-architecture: x64
+cache: true
 
-- run: flutter build apk --release --split-per-abi
-- run: |
-flutter build ios --no-codesign
-cd build/ios/iphoneos
-mkdir Payload
-cd Payload
-ln -s ../Runner.app
-cd ..
-zip -r app.ipa Payload
-- name: Push to Releases
-uses: ncipollo/release-action@v1
+- name: Get dependencies
+run: flutter pub get
+
+- name: Start Android Release Build
+run: flutter build appbundle
+# 8
+- name: Upload Android Release
+uses: actions/upload-artifact@v2
 with:
-artifacts: "build/app/outputs/apk/release/*,build/ios/iphoneos/app.ipa"
-tag: v1.0.${{ github.run_number }}
-token: ${{ secrets.TOKEN }}
-
-
-
-
-
-
-# push to master, main, develop
-# pull request on main master
+name: android-release
+path: build/app/outputs/bundle/release/app-release.aab
